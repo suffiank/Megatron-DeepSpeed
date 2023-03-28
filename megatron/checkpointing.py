@@ -107,8 +107,35 @@ def get_checkpoint_tracker_filename(checkpoints_path):
     training to restart from."""
     return os.path.join(checkpoints_path, 'latest_checkpointed_iteration.txt')
 
+def split_input(input, num_splits):
+    if isinstance(input, dict):
+        slices = [{}]*num_splits
+        for name in input:
+            for idx, value in enumerate(split_input(input[name], num_splits)):
+                slices[idx][name] = value
+        return slices
+    elif isinstance(input, torch.Tensor):
+        return torch.tensor_split(input, num_splits)
+    else:
+        return [input for i in range(num_splits)]
+
+import torch.multiprocessing as mp
+from line_profiler import LineProfiler
 
 def save_checkpoint(iteration, model, optimizer, lr_scheduler):
+    save_checkpoint_profiled(iteration, model, optimizer, lr_scheduler)
+
+def torch_save(state_dict, checkpoint_name):
+    torch.save(state_dict, checkpoint_name, _use_new_zipfile_serialization=False)
+
+def save_checkpoint_profiled(iteration, model, optimizer, lr_scheduler):
+    lp = LineProfiler()
+    lp.add_function(split_input)
+    lp_save_checkpoint = lp(save_checkpoint_original)
+    lp_save_checkpoint(iteration, model, optimizer, lr_scheduler)
+    lp.print_stats()
+
+def save_checkpoint_original(iteration, model, optimizer, lr_scheduler):
     """Save a model checkpoint."""
     args = get_args()
 
@@ -158,7 +185,19 @@ def save_checkpoint(iteration, model, optimizer, lr_scheduler):
         checkpoint_name = get_checkpoint_name(args.save, iteration)
         if not args.deepspeed:
             ensure_directory_exists(checkpoint_name)
-            torch.save(state_dict, checkpoint_name)
+
+            # Note: The commented version was to try parallel file writes
+            # writers = []
+            # ctx = mp.get_context("spawn")
+            for idx, sd in enumerate(split_input(state_dict, 4)):
+                torch.save(sd, checkpoint_name + '_gcs_split{}'.format(idx) , _use_new_zipfile_serialization=False)
+                # a = (sd, checkpoint_name + '_gcs_split{}'.format(idx))
+                # w = ctx.Process(target=torch_save, args=a)
+                # w.start()
+                # writers.append(w)
+
+            # for w in writers:
+                # w.join()
 
     if args.deepspeed:
         #megatron model uses state_dict_for_save_checkpointing instead of the standard state_dict
