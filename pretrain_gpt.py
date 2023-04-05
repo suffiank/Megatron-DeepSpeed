@@ -38,6 +38,8 @@ import subprocess
 from torch import nn
 import torch.nn.functional as F
 
+import nvidia_dlprof_pytorch_nvtx
+
 def model_provider(pre_process=True, post_process=True):
     """Build the model."""
 
@@ -322,7 +324,9 @@ def git_ds_info():
 
 
 if __name__ == "__main__":
+    nvidia_dlprof_pytorch_nvtx.init()
     git_ds_info()
-    pretrain(train_valid_test_datasets_provider, model_provider, forward_step,
-             args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
-             data_post_process=data_post_process)
+    with torch.autograd.profiler.emit_nvtx():
+        pretrain(train_valid_test_datasets_provider, model_provider, forward_step,
+                args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
+                data_post_process=data_post_process)
