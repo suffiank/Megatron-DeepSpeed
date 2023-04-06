@@ -140,50 +140,50 @@ def pretrain(train_valid_test_dataset_provider,
     print_datetime('after model, optimizer, and learning rate '
                    'scheduler are built')
 
-    # Data stuff.
-    timers('train/valid/test-data-iterators-setup').start()
-    if args.virtual_pipeline_model_parallel_size is not None:
-        all_data_iterators = [
-            build_train_valid_test_data_iterators(train_valid_test_dataset_provider)
-            for _ in range(len(model))
-        ]
-        train_data_iterator = [data_iterators[0] for data_iterators in all_data_iterators]
-        valid_data_iterator = [data_iterators[1] for data_iterators in all_data_iterators]
-        test_data_iterator = [data_iterators[2] for data_iterators in all_data_iterators]
-    else:
-        train_data_iterator, valid_data_iterator, test_data_iterator \
-            = build_train_valid_test_data_iterators(
-                train_valid_test_dataset_provider)
-    if args.data_efficiency_curriculum_learning:
-        if args.deepspeed_dataloader is not None:
-            # We use args to pass the deepspeed_dataloader because adding
-            # output to setup_model_and_optimizer will break the API for other
-            # cases. We clear args.deepspeed_dataloader after updating
-            # train_data_iterator because args will be saved in checkpoint and
-            # attempting to save the whole deepspeed_dataloader will lead to
-            # "AttributeError: Can't pickle local object...".
-            train_data_iterator = iter(args.deepspeed_dataloader)
-            args.deepspeed_dataloader = None
-        else:
-            train_data_iterator = None
-    timers('train/valid/test-data-iterators-setup').stop()
-    print_datetime('after dataloaders are built')
-
-    # args.teacher_model is used as global variable to pass the teacher model
-    # for knowledge distillation. Users do not need to set it in the command
-    # line to use kd, but users do need to provide teacher model configurations
-    # like args.num_layers_teacher as described in setup_teacher_model()
-    args.teacher_model = None
-    if args.mos or args.kd: # Set up teacher model
-        args.teacher_model = setup_teacher_model(args, model_provider)
-
-    # Print setup timing.
-    print_rank_0('done with setup ...')
-    timers.log(['model-and-optimizer-setup', 'train/valid/test-data-iterators-setup'])
-    print_rank_0('training ...')
-
-    
     with torch.autograd.profiler.emit_nvtx():
+        # Data stuff.
+        timers('train/valid/test-data-iterators-setup').start()
+        if args.virtual_pipeline_model_parallel_size is not None:
+            all_data_iterators = [
+                build_train_valid_test_data_iterators(train_valid_test_dataset_provider)
+                for _ in range(len(model))
+            ]
+            train_data_iterator = [data_iterators[0] for data_iterators in all_data_iterators]
+            valid_data_iterator = [data_iterators[1] for data_iterators in all_data_iterators]
+            test_data_iterator = [data_iterators[2] for data_iterators in all_data_iterators]
+        else:
+            train_data_iterator, valid_data_iterator, test_data_iterator \
+                = build_train_valid_test_data_iterators(
+                    train_valid_test_dataset_provider)
+        if args.data_efficiency_curriculum_learning:
+            if args.deepspeed_dataloader is not None:
+                # We use args to pass the deepspeed_dataloader because adding
+                # output to setup_model_and_optimizer will break the API for other
+                # cases. We clear args.deepspeed_dataloader after updating
+                # train_data_iterator because args will be saved in checkpoint and
+                # attempting to save the whole deepspeed_dataloader will lead to
+                # "AttributeError: Can't pickle local object...".
+                train_data_iterator = iter(args.deepspeed_dataloader)
+                args.deepspeed_dataloader = None
+            else:
+                train_data_iterator = None
+        timers('train/valid/test-data-iterators-setup').stop()
+        print_datetime('after dataloaders are built')
+
+        # args.teacher_model is used as global variable to pass the teacher model
+        # for knowledge distillation. Users do not need to set it in the command
+        # line to use kd, but users do need to provide teacher model configurations
+        # like args.num_layers_teacher as described in setup_teacher_model()
+        args.teacher_model = None
+        if args.mos or args.kd: # Set up teacher model
+            args.teacher_model = setup_teacher_model(args, model_provider)
+
+        # Print setup timing.
+        print_rank_0('done with setup ...')
+        timers.log(['model-and-optimizer-setup', 'train/valid/test-data-iterators-setup'])
+        print_rank_0('training ...')
+
+        
         iteration = 0
         if args.do_train and args.train_iters > 0:
             iteration = train(forward_step_func,
@@ -191,33 +191,31 @@ def pretrain(train_valid_test_dataset_provider,
                             train_data_iterator, valid_data_iterator)
         print_datetime('after training is done')
 
-    if args.do_valid:
-        prefix = 'the end of training for val data'
-        with torch.autograd.profiler.emit_nvtx():
+        if args.do_valid:
+            prefix = 'the end of training for val data'
             evaluate_and_print_results(prefix, forward_step_func,
                                     valid_data_iterator, model,
                                     iteration, False)
-    
-    # Clean the model and do evaluation again
-    if args.compression_training:
-        model = [redundancy_clean(model[0], args.deepspeed_config, mpu)]
-        if args.do_valid:
-            prefix = 'the end of training and after model cleaning for val data'
-            with torch.autograd.profiler.emit_nvtx():
+        
+        # Clean the model and do evaluation again
+        if args.compression_training:
+            model = [redundancy_clean(model[0], args.deepspeed_config, mpu)]
+            if args.do_valid:
+                prefix = 'the end of training and after model cleaning for val data'
                 evaluate_and_print_results(prefix, forward_step_func,
                                         valid_data_iterator, model,
                                         iteration, False)
 
 
-    if args.save and iteration != 0:
-        save_checkpoint(iteration, model, optimizer, lr_scheduler)
+        if args.save and iteration != 0:
+            save_checkpoint(iteration, model, optimizer, lr_scheduler)
 
-    if args.do_test:
-        # Run on test data.
-        prefix = 'the end of training for test data'
-        evaluate_and_print_results(prefix, forward_step_func,
-                                   test_data_iterator, model,
-                                   0, True, test=True)
+        if args.do_test:
+            # Run on test data.
+            prefix = 'the end of training for test data'
+            evaluate_and_print_results(prefix, forward_step_func,
+                                    test_data_iterator, model,
+                                    0, True, test=True)
 
 def update_train_iters(args):
 
