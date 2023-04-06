@@ -23,6 +23,7 @@ import json
 # The earliest we can measure the start time.
 _TRAIN_START_TIME = time.time()
 
+import nvtx
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 
@@ -140,8 +141,8 @@ def pretrain(train_valid_test_dataset_provider,
     print_datetime('after model, optimizer, and learning rate '
                    'scheduler are built')
 
-    with torch.autograd.profiler.emit_nvtx():
-        # Data stuff.
+    # Data stuff.
+    with nvtx.annotate("Dataloader build", color="purple"):
         timers('train/valid/test-data-iterators-setup').start()
         if args.virtual_pipeline_model_parallel_size is not None:
             all_data_iterators = [
@@ -170,52 +171,52 @@ def pretrain(train_valid_test_dataset_provider,
         timers('train/valid/test-data-iterators-setup').stop()
         print_datetime('after dataloaders are built')
 
-        # args.teacher_model is used as global variable to pass the teacher model
-        # for knowledge distillation. Users do not need to set it in the command
-        # line to use kd, but users do need to provide teacher model configurations
-        # like args.num_layers_teacher as described in setup_teacher_model()
-        args.teacher_model = None
-        if args.mos or args.kd: # Set up teacher model
-            args.teacher_model = setup_teacher_model(args, model_provider)
+    # args.teacher_model is used as global variable to pass the teacher model
+    # for knowledge distillation. Users do not need to set it in the command
+    # line to use kd, but users do need to provide teacher model configurations
+    # like args.num_layers_teacher as described in setup_teacher_model()
+    args.teacher_model = None
+    if args.mos or args.kd: # Set up teacher model
+        args.teacher_model = setup_teacher_model(args, model_provider)
 
-        # Print setup timing.
-        print_rank_0('done with setup ...')
-        timers.log(['model-and-optimizer-setup', 'train/valid/test-data-iterators-setup'])
-        print_rank_0('training ...')
+    # Print setup timing.
+    print_rank_0('done with setup ...')
+    timers.log(['model-and-optimizer-setup', 'train/valid/test-data-iterators-setup'])
+    print_rank_0('training ...')
 
-        
-        iteration = 0
-        if args.do_train and args.train_iters > 0:
-            iteration = train(forward_step_func,
-                            model, optimizer, lr_scheduler,
-                            train_data_iterator, valid_data_iterator)
-        print_datetime('after training is done')
+    
+    iteration = 0
+    if args.do_train and args.train_iters > 0:
+        iteration = train(forward_step_func,
+                        model, optimizer, lr_scheduler,
+                        train_data_iterator, valid_data_iterator)
+    print_datetime('after training is done')
 
+    if args.do_valid:
+        prefix = 'the end of training for val data'
+        evaluate_and_print_results(prefix, forward_step_func,
+                                valid_data_iterator, model,
+                                iteration, False)
+    
+    # Clean the model and do evaluation again
+    if args.compression_training:
+        model = [redundancy_clean(model[0], args.deepspeed_config, mpu)]
         if args.do_valid:
-            prefix = 'the end of training for val data'
+            prefix = 'the end of training and after model cleaning for val data'
             evaluate_and_print_results(prefix, forward_step_func,
                                     valid_data_iterator, model,
                                     iteration, False)
-        
-        # Clean the model and do evaluation again
-        if args.compression_training:
-            model = [redundancy_clean(model[0], args.deepspeed_config, mpu)]
-            if args.do_valid:
-                prefix = 'the end of training and after model cleaning for val data'
-                evaluate_and_print_results(prefix, forward_step_func,
-                                        valid_data_iterator, model,
-                                        iteration, False)
 
 
-        if args.save and iteration != 0:
-            save_checkpoint(iteration, model, optimizer, lr_scheduler)
+    if args.save and iteration != 0:
+        save_checkpoint(iteration, model, optimizer, lr_scheduler)
 
-        if args.do_test:
-            # Run on test data.
-            prefix = 'the end of training for test data'
-            evaluate_and_print_results(prefix, forward_step_func,
-                                    test_data_iterator, model,
-                                    0, True, test=True)
+    if args.do_test:
+        # Run on test data.
+        prefix = 'the end of training for test data'
+        evaluate_and_print_results(prefix, forward_step_func,
+                                test_data_iterator, model,
+                                0, True, test=True)
 
 def update_train_iters(args):
 
@@ -568,7 +569,7 @@ def setup_model_and_optimizer(model_provider_func, teacher=False,
 
     return model, optimizer, lr_scheduler
 
-
+@nvtx.annotate("Train_step", color="green")
 def train_step(forward_step_func, data_iterator,
                model, optimizer, lr_scheduler):
     """Single training step."""
@@ -1018,9 +1019,10 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
     if args.random_ltd:
         assert model[0].random_ltd_enabled()
         args.random_ltd_layer_num = model[0].random_ltd_scheduler.get_random_ltd_layer_num()
-        
+    
     while iteration < args.train_iters and (args.train_tokens is None or \
         args.consumed_train_tokens < args.train_tokens):
+        # with nvtx.annotate("Training", color="green"):
         update_num_microbatches(args.consumed_train_samples)
         if args.deepspeed:
             # inform deepspeed of any batch size changes
@@ -1034,15 +1036,15 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
                     args.iteration + 1)
         loss_dict, skipped_iter, grad_norm, num_zeros_in_grad = \
             train_step(forward_step_func,
-                       train_data_iterator,
-                       model,
-                       optimizer,
-                       lr_scheduler)
+                    train_data_iterator,
+                    model,
+                    optimizer,
+                    lr_scheduler)
         iteration += 1
         args.iteration = iteration
         new_samples = mpu.get_data_parallel_world_size() * \
-                                       args.micro_batch_size * \
-                                       get_num_microbatches()
+                                    args.micro_batch_size * \
+                                    get_num_microbatches()
         args.consumed_train_samples += new_samples
         # This actual_seq_length is used for actual consumed tokens calculation, flops calculation, and logging.
         args.actual_seq_length = args.seq_length
@@ -1075,33 +1077,34 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
         if args.log_params_norm:
             params_norm = calc_params_l2_norm(model)
         report_memory_flag = training_log(loss_dict, total_loss_dict,
-                                          optimizer.param_groups[0]['lr'],
-                                          iteration, loss_scale,
-                                          report_memory_flag, skipped_iter,
-                                          grad_norm, params_norm, num_zeros_in_grad,
-                                          model, optimizer)
+                                        optimizer.param_groups[0]['lr'],
+                                        iteration, loss_scale,
+                                        report_memory_flag, skipped_iter,
+                                        grad_norm, params_norm, num_zeros_in_grad,
+                                        model, optimizer)
 
         # Autoresume
         if args.adlr_autoresume and \
-           (iteration % args.adlr_autoresume_interval == 0):
+        (iteration % args.adlr_autoresume_interval == 0):
             check_adlr_autoresume_termination(iteration, model, optimizer,
-                                              lr_scheduler)
+                                            lr_scheduler)
 
         # Evaluation
         if args.eval_interval and iteration % args.eval_interval == 0 and \
-           args.do_valid:
+        args.do_valid:
             prefix = 'iteration {}'.format(iteration)
             evaluate_and_print_results(prefix, forward_step_func,
-                                       valid_data_iterator, model,
-                                       iteration, False)
+                                    valid_data_iterator, model,
+                                    iteration, False)
 
         # Checkpointing
         saved_checkpoint = False
         if args.save and args.save_interval and \
-           iteration % args.save_interval == 0:
-            save_checkpoint_and_time(iteration, model, optimizer,
-                                     lr_scheduler)
-            saved_checkpoint = True
+        iteration % args.save_interval == 0:
+            with nvtx.annotate("Save checkpoint", color="yellow"):
+                save_checkpoint_and_time(iteration, model, optimizer,
+                                        lr_scheduler)
+                saved_checkpoint = True
 
         # Exiting based on duration
         if args.exit_duration_in_mins:
@@ -1114,7 +1117,7 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
             if done:
                 if not saved_checkpoint:
                     save_checkpoint_and_time(iteration, model, optimizer,
-                                             lr_scheduler)
+                                            lr_scheduler)
                 print_datetime('exiting program after {} minutes'.format(train_time))
                 sys.exit()
 
@@ -1122,7 +1125,7 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
         if args.exit_interval and iteration % args.exit_interval == 0:
             if not saved_checkpoint:
                 save_checkpoint_and_time(iteration, model, optimizer,
-                                         lr_scheduler)
+                                        lr_scheduler)
             torch.distributed.barrier()
             print_datetime('exiting program at iteration {}'.format(iteration))
             sys.exit()
@@ -1130,7 +1133,7 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
 
     return iteration
 
-
+@nvtx.annotate("Evaluate compute", color="red")
 def evaluate(forward_step_func, data_iterator, model, verbose=False):
     """Evaluation."""
     args = get_args()
@@ -1203,6 +1206,7 @@ def evaluate(forward_step_func, data_iterator, model, verbose=False):
             model[0].reset_activation_shape()
 
     return total_loss_dict
+
 
 def evaluate_and_print_results(prefix, forward_step_func,
                                data_iterator, model,

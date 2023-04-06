@@ -276,7 +276,7 @@ def forward_step(data_iterator, model):
     # Output_tensor stores the standard loss, loos_func calculates the total loss.
     return output_tensor, partial(loss_func, loss_mask, moe_loss, mos_loss)
 
-
+@nvtx.annotate("Dataset build", color="grey")
 def train_valid_test_datasets_provider(train_val_test_num_samples):
     """Build train, valid, and test datasets."""
     args = get_args()
@@ -324,7 +324,6 @@ def git_ds_info():
 
 
 if __name__ == "__main__":
-    nvidia_dlprof_pytorch_nvtx.init()
     git_ds_info()
     # with torch.autograd.profiler.emit_nvtx():
     pretrain(train_valid_test_datasets_provider, model_provider, forward_step,
