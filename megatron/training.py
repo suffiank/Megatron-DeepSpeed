@@ -204,9 +204,9 @@ def pretrain(train_valid_test_dataset_provider,
         if args.do_valid:
             prefix = 'the end of training and after model cleaning for val data'
             with torch.autograd.profiler.emit_nvtx():
-            evaluate_and_print_results(prefix, forward_step_func,
-                                    valid_data_iterator, model,
-                                    iteration, False)
+                evaluate_and_print_results(prefix, forward_step_func,
+                                        valid_data_iterator, model,
+                                        iteration, False)
 
 
     if args.save and iteration != 0:
