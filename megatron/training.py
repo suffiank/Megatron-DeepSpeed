@@ -182,24 +182,28 @@ def pretrain(train_valid_test_dataset_provider,
     timers.log(['model-and-optimizer-setup', 'train/valid/test-data-iterators-setup'])
     print_rank_0('training ...')
 
-    iteration = 0
-    if args.do_train and args.train_iters > 0:
-        iteration = train(forward_step_func,
-                          model, optimizer, lr_scheduler,
-                          train_data_iterator, valid_data_iterator)
-    print_datetime('after training is done')
+    
+    with torch.autograd.profiler.emit_nvtx():
+        iteration = 0
+        if args.do_train and args.train_iters > 0:
+            iteration = train(forward_step_func,
+                            model, optimizer, lr_scheduler,
+                            train_data_iterator, valid_data_iterator)
+        print_datetime('after training is done')
 
     if args.do_valid:
         prefix = 'the end of training for val data'
-        evaluate_and_print_results(prefix, forward_step_func,
-                                   valid_data_iterator, model,
-                                   iteration, False)
+        with torch.autograd.profiler.emit_nvtx():
+            evaluate_and_print_results(prefix, forward_step_func,
+                                    valid_data_iterator, model,
+                                    iteration, False)
     
     # Clean the model and do evaluation again
     if args.compression_training:
         model = [redundancy_clean(model[0], args.deepspeed_config, mpu)]
         if args.do_valid:
             prefix = 'the end of training and after model cleaning for val data'
+            with torch.autograd.profiler.emit_nvtx():
             evaluate_and_print_results(prefix, forward_step_func,
                                     valid_data_iterator, model,
                                     iteration, False)
