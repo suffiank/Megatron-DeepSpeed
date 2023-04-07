@@ -213,10 +213,11 @@ def pretrain(train_valid_test_dataset_provider,
 
     if args.do_test:
         # Run on test data.
-        prefix = 'the end of training for test data'
-        evaluate_and_print_results(prefix, forward_step_func,
-                                test_data_iterator, model,
-                                0, True, test=True)
+        with nvtx.annotate("Test part", color="orange"):
+            prefix = 'the end of training for test data'
+            evaluate_and_print_results(prefix, forward_step_func,
+                                    test_data_iterator, model,
+                                    0, True, test=True)
 
 def update_train_iters(args):
 
@@ -432,6 +433,7 @@ def load_model_weights_only(model_provider_func):
 
     return model, optimizer, lr_scheduler
 
+@nvtx.annotate("setup_model_and_optimizer", color="white")
 def setup_model_and_optimizer(model_provider_func, teacher=False,
     data_post_process=None, build_train_valid_test_datasets_provider=None):
     """Setup model and optimizer."""
@@ -975,7 +977,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
 
     return report_memory_flag
 
-
+@nvtx.annotate("Save checkpoint and time", color="brown")
 def save_checkpoint_and_time(iteration, model, optimizer, lr_scheduler):
     timers = get_timers()
     # Extra barrier is added to make sure
@@ -1101,7 +1103,7 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
         saved_checkpoint = False
         if args.save and args.save_interval and \
         iteration % args.save_interval == 0:
-            with nvtx.annotate("Save checkpoint", color="yellow"):
+            with nvtx.annotate("Checkpointing", color="yellow"):
                 save_checkpoint_and_time(iteration, model, optimizer,
                                         lr_scheduler)
                 saved_checkpoint = True
