@@ -21,6 +21,7 @@ import sys
 import numpy as np
 from deepspeed.accelerator import get_accelerator
 import torch
+import nvtx
 
 from megatron import (get_args,
                       is_rank_0,
