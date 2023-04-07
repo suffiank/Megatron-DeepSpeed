@@ -77,7 +77,7 @@ def forward_step(forward_step_func, data_iterator, model, input_tensor, losses_r
 
     return output_tensor
 
-@nvtx.annotate("backward_strp", color="silver")
+@nvtx.annotate("backward_step", color="silver")
 def backward_step(optimizer, input_tensor, output_tensor, output_tensor_grad, model=None):
     """Backward step through passed-in output tensor.
 

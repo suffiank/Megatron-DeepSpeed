@@ -107,7 +107,7 @@ def get_checkpoint_tracker_filename(checkpoints_path):
     training to restart from."""
     return os.path.join(checkpoints_path, 'latest_checkpointed_iteration.txt')
 
-
+nvtx.annotate("Checkpointing", color="brown")
 def save_checkpoint(iteration, model, optimizer, lr_scheduler):
     """Save a model checkpoint."""
     args = get_args()
