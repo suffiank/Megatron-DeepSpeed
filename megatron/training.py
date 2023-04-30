@@ -23,6 +23,7 @@ import json
 # The earliest we can measure the start time.
 _TRAIN_START_TIME = time.time()
 
+import nvtx
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
 
@@ -141,33 +142,34 @@ def pretrain(train_valid_test_dataset_provider,
                    'scheduler are built')
 
     # Data stuff.
-    timers('train/valid/test-data-iterators-setup').start()
-    if args.virtual_pipeline_model_parallel_size is not None:
-        all_data_iterators = [
-            build_train_valid_test_data_iterators(train_valid_test_dataset_provider)
-            for _ in range(len(model))
-        ]
-        train_data_iterator = [data_iterators[0] for data_iterators in all_data_iterators]
-        valid_data_iterator = [data_iterators[1] for data_iterators in all_data_iterators]
-        test_data_iterator = [data_iterators[2] for data_iterators in all_data_iterators]
-    else:
-        train_data_iterator, valid_data_iterator, test_data_iterator \
-            = build_train_valid_test_data_iterators(
-                train_valid_test_dataset_provider)
-    if args.data_efficiency_curriculum_learning:
-        if args.deepspeed_dataloader is not None:
-            # We use args to pass the deepspeed_dataloader because adding
-            # output to setup_model_and_optimizer will break the API for other
-            # cases. We clear args.deepspeed_dataloader after updating
-            # train_data_iterator because args will be saved in checkpoint and
-            # attempting to save the whole deepspeed_dataloader will lead to
-            # "AttributeError: Can't pickle local object...".
-            train_data_iterator = iter(args.deepspeed_dataloader)
-            args.deepspeed_dataloader = None
+    with nvtx.annotate("Build Dataloader", color="purple"):
+        timers('train/valid/test-data-iterators-setup').start()
+        if args.virtual_pipeline_model_parallel_size is not None:
+            all_data_iterators = [
+                build_train_valid_test_data_iterators(train_valid_test_dataset_provider)
+                for _ in range(len(model))
+            ]
+            train_data_iterator = [data_iterators[0] for data_iterators in all_data_iterators]
+            valid_data_iterator = [data_iterators[1] for data_iterators in all_data_iterators]
+            test_data_iterator = [data_iterators[2] for data_iterators in all_data_iterators]
         else:
-            train_data_iterator = None
-    timers('train/valid/test-data-iterators-setup').stop()
-    print_datetime('after dataloaders are built')
+            train_data_iterator, valid_data_iterator, test_data_iterator \
+                = build_train_valid_test_data_iterators(
+                    train_valid_test_dataset_provider)
+        if args.data_efficiency_curriculum_learning:
+            if args.deepspeed_dataloader is not None:
+                # We use args to pass the deepspeed_dataloader because adding
+                # output to setup_model_and_optimizer will break the API for other
+                # cases. We clear args.deepspeed_dataloader after updating
+                # train_data_iterator because args will be saved in checkpoint and
+                # attempting to save the whole deepspeed_dataloader will lead to
+                # "AttributeError: Can't pickle local object...".
+                train_data_iterator = iter(args.deepspeed_dataloader)
+                args.deepspeed_dataloader = None
+            else:
+                train_data_iterator = None
+        timers('train/valid/test-data-iterators-setup').stop()
+        print_datetime('after dataloaders are built')
 
     # args.teacher_model is used as global variable to pass the teacher model
     # for knowledge distillation. Users do not need to set it in the command
@@ -211,9 +213,10 @@ def pretrain(train_valid_test_dataset_provider,
     if args.do_test:
         # Run on test data.
         prefix = 'the end of training for test data'
-        evaluate_and_print_results(prefix, forward_step_func,
-                                   test_data_iterator, model,
-                                   0, True, test=True)
+        with nvtx.annotate("Evaluate Test Set", color="orange"):
+            evaluate_and_print_results(prefix, forward_step_func,
+                                       test_data_iterator, model,
+                                       0, True, test=True)
 
 def update_train_iters(args):
 
@@ -429,6 +432,7 @@ def load_model_weights_only(model_provider_func):
 
     return model, optimizer, lr_scheduler
 
+@nvtx.annotate("Setup Model and Optimizer", color="white")
 def setup_model_and_optimizer(model_provider_func, teacher=False,
     data_post_process=None, build_train_valid_test_datasets_provider=None):
     """Setup model and optimizer."""
@@ -566,7 +570,7 @@ def setup_model_and_optimizer(model_provider_func, teacher=False,
 
     return model, optimizer, lr_scheduler
 
-
+@nvtx.annotate("Train Step", color="green")
 def train_step(forward_step_func, data_iterator,
                model, optimizer, lr_scheduler):
     """Single training step."""
@@ -973,6 +977,7 @@ def training_log(loss_dict, total_loss_dict, learning_rate, iteration,
     return report_memory_flag
 
 
+@nvtx.annotate("Save Checkpoint (timed)", color="yellow")
 def save_checkpoint_and_time(iteration, model, optimizer, lr_scheduler):
     timers = get_timers()
     # Extra barrier is added to make sure
@@ -1128,7 +1133,7 @@ def train(forward_step_func, model, optimizer, lr_scheduler,
 
     return iteration
 
-
+@nvtx.annotate("Evaluate Model", color="red")
 def evaluate(forward_step_func, data_iterator, model, verbose=False):
     """Evaluation."""
     args = get_args()

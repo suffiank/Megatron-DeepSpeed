@@ -38,6 +38,8 @@ import subprocess
 from torch import nn
 import torch.nn.functional as F
 
+import nvtx
+
 def model_provider(pre_process=True, post_process=True):
     """Build the model."""
 
@@ -274,7 +276,7 @@ def forward_step(data_iterator, model):
     # Output_tensor stores the standard loss, loos_func calculates the total loss.
     return output_tensor, partial(loss_func, loss_mask, moe_loss, mos_loss)
 
-
+@nvtx.annotate("Build Datasets", color="grey")
 def train_valid_test_datasets_provider(train_val_test_num_samples):
     """Build train, valid, and test datasets."""
     args = get_args()

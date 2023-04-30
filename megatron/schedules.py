@@ -16,6 +16,7 @@
 from contextlib import contextmanager
 import torch
 from torch.nn.parallel.distributed import DistributedDataParallel as torchDDP
+import nvtx
 
 from megatron import get_args
 from megatron import get_num_microbatches
@@ -38,7 +39,7 @@ def get_forward_backward_func():
         forward_backward_func = forward_backward_no_pipelining
     return forward_backward_func
 
-
+@nvtx.annotate("Forward Step", color="pink")
 def forward_step(forward_step_func, data_iterator, model, input_tensor, losses_reduced):
     """Forward step for passed-in model.
 
@@ -75,7 +76,7 @@ def forward_step(forward_step_func, data_iterator, model, input_tensor, losses_r
 
     return output_tensor
 
-
+@nvtx.annotate("Backward Step", color="silver")
 def backward_step(optimizer, input_tensor, output_tensor, output_tensor_grad, model=None):
     """Backward step through passed-in output tensor.
 

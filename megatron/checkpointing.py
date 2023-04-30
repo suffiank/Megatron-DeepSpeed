@@ -1,4 +1,4 @@
-# coding=utf-8
+ coding=utf-8
 # Copyright (c) 2020, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@ import sys
 import numpy as np
 from deepspeed.accelerator import get_accelerator
 import torch
+import nvtx
 
 from megatron import (get_args,
                       is_rank_0,
@@ -108,6 +109,7 @@ def get_checkpoint_tracker_filename(checkpoints_path):
     return os.path.join(checkpoints_path, 'latest_checkpointed_iteration.txt')
 
 
+@nvtx.annotate("Save Checkpoint", color="brown")
 def save_checkpoint(iteration, model, optimizer, lr_scheduler):
     """Save a model checkpoint."""
     args = get_args()
