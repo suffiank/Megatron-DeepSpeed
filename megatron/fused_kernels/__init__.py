@@ -59,7 +59,7 @@ def load(args):
             extra_cflags=['-O3',],
             extra_cuda_cflags=extra_cuda_cflags,
             extra_include_paths=extra_include_paths,
-            verbose=(args.rank == 1)
+            verbose=(args.rank == 0)
         )
 
     # ==============
